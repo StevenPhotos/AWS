@@ -1,0 +1,101 @@
+ 
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Stream audio from Worker to AudioWorklet</title>
+  </head>
+  <body>
+    <button>Start Audio Playback</button>
+    <script>
+      if (globalThis.gc) {
+       gc();
+      }
+      // AudioWorkletStream
+      // Stream audio from Worker to AudioWorklet
+      // guest271314 2-24-2020
+      'use strict';
+      const handleEvents = e =>
+        globalThis.console.log(
+          e.type === 'statechange'
+            ? 'AudioContext.state:' + e.target.state
+            : e.type
+        );
+      const button = document.querySelector('button');
+      class AudioWorkletStream {
+        constructor({
+          codecs = ['audio/wav'],
+          urls = [''],
+          sampleRate = 44100,
+          numberOfChannels = 2,
+          latencyHint = 0,
+          workletOptions = {},
+        } = {}) {
+          this.mediaStreamTrack = new Promise(async resolve => {
+            const ac = new AudioContext({
+              sampleRate,
+              numberOfChannels,
+              latencyHint,
+            });
+            await ac.suspend();
+            console.log(ac.baseLatency);
+            ac.onstatechange = handleEvents;
+            await ac.audioWorklet.addModule('audioWorklet.js');
+            // optionally pass MediaStreamTrack to resolve()
+            resolve();
+            const aw = new AudioWorkletNode(
+              ac,
+              'audio-data-worklet-stream',
+              workletOptions
+            );
+            aw.connect(ac.destination);
+            const worker = new Worker('worker.js', {
+              type: 'module',
+            });
+            worker.postMessage(
+              {
+                urls,
+              },
+              [aw.port]
+            );
+            worker.onmessage = async e => {
+              if (e.data.start) {
+                await ac.resume();
+              }
+              if (e.data.ended) {
+                console.log('audio worklet stream done', e.data.currentTime, e.data.currentFrame);
+                button.disabled = false;
+                button.textContent = 'Start Audio Playback';
+                await ac.suspend();
+                aw.disconnect();
+                aw.port.close();
+                await ac.close();
+                worker.terminate();
+              }
+            };
+          });
+        }
+      }
+
+      button.onclick = async _ => {
+        button.disabled = true;
+        button.textContent = 'Audio Playing';
+        // set parameters as arrays for potential "infinite" input, output stream
+        let workletStream = new AudioWorkletStream({ 
+          urls: [
+            'IDK.wav',
+          ],
+          latencyHint: 0,
+          workletOptions: {
+            numberOfInputs: 1,
+            numberOfOutputs: 2,
+            channelCount: 2,
+            processorOptions: {
+              codec: 'audio/wav',
+              offset: 0
+            },
+          },
+        });
+      };
+    </script>
+  </body>
+</html>
